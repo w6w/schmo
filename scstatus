@@ -36,6 +36,8 @@ _Mid="\e[1m\e[33m"	#yellow
 _High="\e[1m\e[31m"	#red
 _Norm="\e[0m"		#no_color
 _Nodelist="/etc/schmo/nodes.enable"	#List of nodes to manager, thei IP must be in "/etc/hosts"
+_Userlist="/etc/schmo/users.enable"	#List of users to manager
+_LocalFolder="/var/schmo"		#Folder to store and manipulate data (chown USER if scserver run not root)
 _Conect="ssh -p 22"			#Command to conect on nodes
 #####
 
@@ -50,14 +52,32 @@ function Start(){ #dep funcs "Help"
 		exit 0
 	fi
 	if [[ "$_Par" = "-c" || "$_Par" = "--credit" || "$_Par" = "--check" || "$_Par" = "--checkcredit" ]] ; then
-		check_credit
+		check_user_credit
+		exit 0
 	fi
 }
 
-function check_credit(){
-	:
-	
-	exit 0
+function check_user_credit(){
+	#echo "_users=$_user ; _machine=$_machine" ; sleep 1	#debug
+	#echo "CHECK_USER $_machine $_user `date +%s`" #debug
+	_UserDebit1="0" ; _UserDebit2="0" ; _UserCredit="0" ; _user="$USER"
+	if [[ -r $_Userlist ]] ; then
+		_UserCredit=$(awk -v user="$_user" "{  if (\$1 == user) {printf \"%s\" , \$2 }  }"  $_Userlist)  
+		_UserResidue=$(awk -v user="$_user" "{  if (\$1 == user) {printf \"%s\" , \$3 }  }"  $_Userlist)
+	fi
+	if [[ -n "$_UserCredit" || -n "$_UserResidue" ]] ; then
+		[[ -r ""$_LocalFolder"/"$_user".running" ]] && _UserDebit1=$(awk "{sum += \$9} END {printf \"%s\" , sum}"  ""$_LocalFolder"/"$_user".running") 
+		[[ -r ""$_LocalFolder"/"$_user".ended" ]] && _UserDebit2=$(awk "{sum += \$10} END {printf \"%s\" , sum}"  ""$_LocalFolder"/"$_user".ended") 
+		_UserBalance=$(echo "$_UserCredit + $_UserResidue - $_UserDebit1 - $_UserDebit2" | bc) 
+		[[ `echo $_UserBalance '>' "$(($_UserCredit / 10))" | bc -l` -eq "1" ]] && _FinalBalance="$_Low$_UserBalance$_Norm"
+		[[ `echo $_UserBalance '<=' "$(($_UserCredit / 10))" | bc -l` -eq "1" ]] && _FinalBalance="$_Mid$_UserBalance$_Norm"
+		[[ `echo $_UserBalance '<' "0" | bc -l` -eq "1" ]] && _FinalBalance="$_High$_UserBalance$_Norm"
+		echo -e "USER:\t\t\"$USER\" - `date +%Y-%m-%d_%H:%M:%S` \nTotal Credit:\t$_UserCredit \nTotal Debit:\t$(echo "$_UserDebit1 + $_UserDebit2 - $_UserResidue" | bc) \nBalance:\t$_FinalBalance"
+		exit 0
+	else
+		echo "There is no quote for \"$USER\" or it is not managed for $0."
+		exit 1
+	fi
 }
 
 function Help(){
@@ -154,7 +174,7 @@ function get_status(){	#dep funcs "RemotData", "RemotTop", "DataProc"
 
 
 
-# FAZER funcao ver créditos   #<<<============== ESTOU AQUIIIIIIIIIIIIIIIIIII
+# FAZER funcao ver creditos   #<<<============== ESTOU AQUIIIIIIIIIIIIIIIIIII
 
 
 ##### Main
