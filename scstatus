@@ -1,0 +1,164 @@
+#!/bin/bash
+######################################################################
+#    SCHMO - System for Cluster's Humble management and operation    #
+#                                                                    #
+# scstatus:                                                          #
+#  Part of SCHMO system to manager cluster on very low couplin       #
+#                                                                    #
+# scserver -> (root) manager nodes and make settings                 #
+# scstatus -> (user) get statistcs of nodes and jobs                 #
+# scsub -> (user) send a job to a node                               #
+# scdel -> (user) delete a job on an slave node                      #
+# sccheck -> (user|root) checks dependencies and settings            #
+#                                                                    #
+# qstat, sinfo -> link para scstatus                                 #
+# qsub, srun -> link to scsub                                        #
+# qdel, scancel -> link to scdel                                     #
+#                                                                    #
+# Created by: Marcelo Giovani at 2018-07  (mgiovanibr@gmail.com)     #
+#                                                                    #
+# Last change (2018-07-24): Marcelo giovani                          #
+# Bug fix                                                            #
+#                                                                    #
+# Change (2018-07-22): Marcelo giovani                               #
+# Version 0.0.1                                                      #
+#                                                                    #
+######################################################################
+
+#adicionar "-c --credit" to see credit all, used and left
+
+#####
+_Version="0.0.1"
+_ERROR="\e[1m\e[7mERROR\e[0m"
+_Bold="\e[1m"		#Bold
+_Low="\e[1m\e[32m"	#green
+_Mid="\e[1m\e[33m"	#yellow
+_High="\e[1m\e[31m"	#red
+_Norm="\e[0m"		#no_color
+_Nodelist="/etc/schmo/nodes.enable"	#List of nodes to manager, thei IP must be in "/etc/hosts"
+_Conect="ssh -p 22"			#Command to conect on nodes
+#####
+
+function Start(){ #dep funcs "Help"
+	_Par="$1" 
+	if [[ "$_Par" = "-v" || "$_Par" = "--version" ]] ; then
+		echo "$_Version"
+		exit 0
+	fi
+	if [[ "$_Par" = "-h" || "$_Par" = "--help" ]] ; then
+		Help
+		exit 0
+	fi
+	if [[ "$_Par" = "-c" || "$_Par" = "--credit" || "$_Par" = "--check" || "$_Par" = "--checkcredit" ]] ; then
+		check_credit
+	fi
+}
+
+function check_credit(){
+	:
+	
+	exit 0
+}
+
+function Help(){
+	echo -e "$0 version $_Version\n"
+	echo -e "\tUser:\t$0\n\t\t$0 --all\n\t\t$0 <ListNodes>\n"
+	echo -e "\tIf \"ListNode\" is present the program will be report the status of specific nodes WITH their user run process.\n"
+	echo -e "\t<ListNode> \t:optional (IE: node-03 node-04)\n"
+}
+
+function RemotData(){
+	_RemotData="$($_Conect "$i" 2> /dev/null '
+		grep MHz /proc/cpuinfo | wc -l 
+		uptime | tr "," "\n" | grep "load aver" | cut -d":" -f2 
+		#free -m | grep "^Mem" | tr " " "\n" | grep -v "^$" | head -n 3 | tail -n 2  #Alternate to next line
+		free -m | grep "^Mem" | awk "{ printf \"%s\n%s\n\", \$2, \$3}"
+		echo "Disk01= $(df -h | awk "{ printf \"%s %s %s\n\" , \$6, \$2, \$5 }" | grep --color=none "^/home" )"
+		echo "Disk02= $(df -h | awk "{ printf \"%s %s %s\n\" , \$6, \$2, \$5 }" | grep --color=none "^/ " )"
+	' )"
+}
+
+function RemotTop(){
+	_RemotTop="$($_Conect "$i" 2> /dev/null '
+		top -b -n1 -w 104 -o +TIME -u `whoami` -c | grep -A 12 "^  PID " | grep -v "^$" | awk "{   {sub(/\./,\"\",\$11)} {sub(/:/,\"\.\",\$11)} if (\$11 >= \"0.0130\") { {printf \" %-6s %-5s %-7s %-9s \", \$1, \$10, \$9, \$11} {for (x=12; x<=NF; x++) {printf  \$x \" \"}} {printf \"\n\"} }   }"
+	' ) "
+}
+
+function DataProc(){
+	_Disk01="$(echo "$_RemotData" | grep --color=none "^Disk01" )"
+	_Disk02="$(echo "$_RemotData" | grep --color=none "^Disk02" )"
+	_Disk="$(echo $_Disk01 | awk "{ printf \"%s %s %s\n\" , \$2, \$3, \$4 }" )" #; echo "Dis=.$_Disk."
+	[[ -z "$(echo $_Disk | grep "^/home" )" ]] &&  _Disk="$(echo $_Disk02 | awk "{ printf \"%s %s %s\n\" , \$2, \$3, \$4 }" )" #; echo "Dis=.$_Disk."
+	_DiskF1="$(echo $_Disk | awk "{ printf \"%s\" , \$1 }" | cut -d"%" -f1)"
+	_DiskF2="$(echo $_Disk | awk "{ printf \"%s\" , \$2 }" | cut -d"%" -f1)"
+	_DiskF3="$(echo $_Disk | awk "{ printf \"%s\" , \$3 }" | cut -d"%" -f1)"
+	_NThreads=$(echo "$_RemotData" | tr "\n" " "  | awk "{ printf \"%s\", \$1}" ) 
+	_AVR=$(echo "$_RemotData" | tr "\n" " "  | awk "{ printf \"%s\", \$2}" )
+	_MemMax=$(echo "$_RemotData" | tr "\n" " "  | awk "{ printf \"%s\", \$3}" )
+	_MemUso=$(echo "$_RemotData" | tr "\n" " "  | awk "{ printf \"%s\", \$4}" )
+	_AVRPercent=$(printf "%.2f\n" $(echo "($_AVR / $_NThreads ) * 100" | bc -l))
+	_MemPercent=$(printf "%.2f\n" $(echo "($_MemUso / $_MemMax ) * 100" | bc -l))
+	## Trocar [[ `echo $_AVRPercent '<' "50" | bc -l` -eq "1" ]] por -> [[ "$_AVRPercent" < "50" ]] 
+	[[ `echo $_AVRPercent '<' "50" | bc -l` -eq "1" ]] && _AVRPercentCor="$_Low$_AVRPercent$_Norm"
+	[[ `echo $_AVRPercent '>=' "50" | bc -l` -eq "1" ]] && _AVRPercentCor="$_Mid$_AVRPercent$_Norm"
+	[[ `echo $_AVRPercent '>' "85" | bc -l` -eq "1" ]] && _AVRPercentCor="$_High$_AVRPercent$_Norm"
+	[[ `echo $_MemPercent '<' "30" | bc -l` -eq "1" ]] && _MemPercentCor="$_Low$_MemPercent$_Norm"
+	[[ `echo $_MemPercent '>=' "30" | bc -l` -eq "1" ]] && _MemPercentCor="$_Mid$_MemPercent$_Norm"
+	[[ `echo $_MemPercent '>' "60" | bc -l` -eq "1" ]] && _MemPercentCor="$_High$_MemPercent$_Norm"
+	[[ `echo $_DiskF3 '<' "50" | bc -l` -eq "1" ]] && _Disk="$_DiskF1 $_DiskF2 $_Low$_DiskF3$_Norm"
+	[[ `echo $_DiskF3 '>=' "50" | bc -l` -eq "1" ]] && _Disk="$_DiskF1 $_DiskF2 $_Mid$_DiskF3$_Norm"
+	[[ `echo $_DiskF3 '>' "85" | bc -l` -eq "1" ]] && _Disk="$_DiskF1 $_DiskF2 $_High$_DiskF3$_Norm"
+}
+
+function check_nodesaddress(){
+	subfunc_error_nodesenable(){
+		echo -e "$_ERROR ,some problem in the file \"$_Nodelist\" or in their respective IP address in the \"/etc/hosts\" file."
+		echo "Leaving the $0......"
+		exit 1
+	}
+	if [[ -r "$_Nodelist" ]] ; then
+		_Target=`cat "$_Nodelist" | awk '{print $1}' | grep -v "^#" | grep -v "^$" | tr "\n" " " `
+		[[ -z "$_Target" ]] && subfunc_error_nodesenable
+	else
+		subfunc_error_nodesenable
+	fi
+}
+
+function get_status(){	#dep funcs "RemotData", "RemotTop", "DataProc"
+	if [[ -z "$@" || "$@" = "all" || "$@" = "--all" ]] ; then  # if $@ = "void" or "all" or "--all" get staus of all
+		for i in $_Target ; do
+			if `resolveip $i &> /dev/null` ; then
+				RemotData
+				DataProc
+				printf "%b\n" "$i: CPU[${_NThreads}|${_AVR}|${_AVRPercentCor}%] MEM["$_MemMax"|"$_MemUso"|"$_MemPercentCor"%] DISK[$_Disk%]"
+				#printf "%s: CPU[%3s|%7.7s|%b] \tMEM[%6s|%7.7s|%b]\n" "$i" "$_NThreads" "$_AVR" "$_AVRPercentCor"% "$_MemMax" "$_MemUso" "$_MemPercentCor"% 
+			else
+				echo -e "$_ERROR on connection to $i \n"
+			fi
+		done
+	else	# if  "nodes list" get staus of specific node with jobs, usuario usa o xargs se quiser ver top de todos os nodes 
+		_Target="$@"
+		for i in $_Target ; do
+			if `resolveip $i &> /dev/null` ; then
+				RemotData
+				RemotTop
+				DataProc
+				printf "%b\n" "$i: CPU[${_NThreads}|${_AVR}|${_AVRPercentCor}%] MEM["$_MemMax"|"$_MemUso"|"$_MemPercentCor"%] DISK[$_Disk%]"
+				echo -e "$_RemotTop \n "
+			else
+				echo -e "$_ERROR on connection to $i \n"
+			fi
+		done
+	fi
+}
+
+
+
+# FAZER funcao ver créditos   #<<<============== ESTOU AQUIIIIIIIIIIIIIIIIIII
+
+
+##### Main
+Start "$@"
+check_nodesaddress
+get_status "$@"
+##### End Main
